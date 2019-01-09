@@ -1,5 +1,5 @@
 {
-  "name": "@videopuppet/cloudformation-custom-resource",
+  "name": "@serverlesspub/cloudformation-custom-resource",
   "version": "1.0.0",
   "files": [
     "src",
@@ -7,9 +7,6 @@
   ],
   "license": "UNLICENSED",
   "private": true,
-  "devDependencies": {
-    "@videopuppet/config-tools": "file:../../config/tools"
-  },
   "optionalDependencies": {
     "aws-sdk": "^2.349.0"
   }
