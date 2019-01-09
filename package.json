@@ -5,8 +5,8 @@
     "src",
     "*.js"
   ],
-  "license": "UNLICENSED",
-  "private": true,
+  "main": "index.js",
+  "license": "MIT",
   "optionalDependencies": {
     "aws-sdk": "^2.349.0"
   }

@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Generic workflow for custom CloudFormation Resources
+Parameters:
+  DLQSNSTopicARN: 
+    Type: String
+    Description: >
+      Optional ARN of an SNS topic for dead-letter queues for the workflow. 
+      Useful for troubleshooting configuration.
+    Default: ''
+  TaskLambdaARN:
+    Type: String
+    Description: The ARN of a task to execute (For example, a Lambda function)
+ 
+Resources:
+
+  CloudformationUploadResultLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: WriteCloudWatchLogs
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+  
+  StartStateMachineLambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: WriteCloudWatchLogs
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+        - PolicyName: WriteDLQTopic 
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 'sns:Publish'
+                Resource: !Ref DLQSNSTopicARN
+        - PolicyName: StartStateMachine
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'states:StartExecution'
+                Resource: !Ref StateMachine
+                
+  StateMachineExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: AllowLambdaExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 'lambda:InvokeFunction'
+                Resource: 
+                  - !Ref TaskLambdaARN
+                  - !GetAtt CloudformationUploadResultLambdaFunction.Arn
+
+
+  CloudformationUploadResultLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Runtime: nodejs8.10
+      Code: src/ 
+      Handler: index.uploadResults
+      Role: !GetAtt CloudformationUploadResultLambdaRole.Arn
+      Timeout: 100
+
+  StateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      RoleArn: !GetAtt StateMachineExecutionRole.Arn
+      DefinitionString:
+        !Sub |-
+          {
+            "Comment": "Execute a custom Cloudformation flow",
+            "StartAt": "RunTask",
+            "States": {
+              "RunTask": {
+                "Type": "Task",
+                "Resource": "${TaskLambdaARN}",
+                "Catch": [{
+                  "ErrorEquals": [ "States.ALL" ],
+                  "Next": "UploadResult",
+                  "ResultPath": "$.Error"
+                }],
+                "Next": "UploadResult"
+              },
+              "UploadResult": {
+                "Type": "Task",
+                "Resource": "${CloudformationUploadResultLambdaFunction.Arn}",
+                "End": true
+              }
+            }
+          }
+
+  StartStateMachineLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Runtime: nodejs8.10
+      Code: src/
+      Handler: index.startStateMachine
+      Role: !GetAtt StartStateMachineLambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          STATE_MACHINE: !Ref StateMachine
+      DeadLetterConfig:
+        TargetArn: !Ref DLQSNSTopicARN
+
+Outputs:
+  ServiceToken:
+    Value: !GetAtt StartStateMachineLambdaFunction.Arn
